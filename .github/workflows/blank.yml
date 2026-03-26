@@ -1,0 +1,67 @@
+name: Build gRPC on Ubuntu 20.04
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:   # 允许手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    timeout-minutes: 120   # 编译可能较耗时，设置足够长的时间
+
+    steps:
+      # 检出当前仓库（如果有需要的工作流文件，否则可省略）
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 安装编译依赖
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y cmake build-essential autoconf libtool pkg-config git
+
+      # 克隆 gRPC 源码（只取需要的版本，浅克隆以节省时间）
+      - name: Clone gRPC
+        run: |
+          git clone --recurse-submodules -b v1.58.0 --depth 1 --shallow-submodules https://github.com/grpc/grpc
+          cd grpc
+
+      # 编译并安装 gRPC 到 ~/grpc/install
+      - name: Build and install gRPC
+        run: |
+          cd grpc
+          mkdir -p cmake/build
+          cd cmake/build
+          export GRPC_INSTALL_DIR=$HOME/grpc/install
+          cmake -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DCMAKE_INSTALL_PREFIX=$GRPC_INSTALL_DIR ../..
+          make -j $(nproc)   # 使用所有 CPU 核心
+          make install
+
+      # 编译并安装 Abseil-cpp（gRPC 的第三方依赖）
+      - name: Build and install Abseil-cpp
+        run: |
+          cd grpc
+          mkdir -p third_party/abseil-cpp/cmake/build
+          cd third_party/abseil-cpp/cmake/build
+          export GRPC_EXT_INSTALL_DIR=$HOME/grpc/install_ext
+          cmake -DCMAKE_INSTALL_PREFIX=$GRPC_EXT_INSTALL_DIR -DCMAKE_POSITION_INDEPENDENT_CODE=TRUE ../..
+          make -j $(nproc)
+          make install
+
+      # 打包编译产物（gRPC 安装目录和 Abseil-cpp 安装目录）
+      - name: Package artifacts
+        run: |
+          mkdir -p artifacts
+          tar -czf artifacts/grpc-install.tar.gz -C $HOME/grpc install
+          tar -czf artifacts/grpc-ext-install.tar.gz -C $HOME/grpc install_ext
+
+      # 上传工件（可在 Actions 运行页面下载）
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: grpc-built
+          path: artifacts/
+          retention-days: 7   # 保留天数
