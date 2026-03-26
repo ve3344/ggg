@@ -1,66 +1,77 @@
-name: Build gRPC on Ubuntu 20.04
+name: Build gRPC on Ubuntu 20.04 (Docker)
 
 on:
   push:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch:   # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest   # 宿主机使用最新 Ubuntu，确保 Docker 可用
+    container:
+      image: ubuntu:20.04     # 使用 Ubuntu 20.04 容器
+      options: --user root    # 使用 root 用户，避免权限问题
 
     steps:
-      # 检出当前仓库（如果有需要的工作流文件，否则可省略）
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # 安装编译依赖
+      # 安装编译依赖（容器内）
       - name: Install dependencies
         run: |
-          sudo apt update
-          sudo apt install -y cmake build-essential autoconf libtool pkg-config git
+          apt update
+          apt install -y cmake build-essential autoconf libtool pkg-config git
 
-      # 克隆 gRPC 源码（只取需要的版本，浅克隆以节省时间）
-      - name: Clone gRPC
+      # 配置 Git 安全目录（避免在容器内 clone 时报权限错误）
+      - name: Configure Git safe directory
+        run: git config --global --add safe.directory '*'
+
+      # 克隆 gRPC 源码（含子模块）
+      - name: Checkout gRPC
         run: |
           git clone --recurse-submodules -b v1.58.0 --depth 1 --shallow-submodules https://github.com/grpc/grpc
           cd grpc
 
-      # 编译并安装 gRPC 到 ~/grpc/install
-      - name: Build and install gRPC
+      # 编译 gRPC 主库
+      - name: Build gRPC
         run: |
           cd grpc
           mkdir -p cmake/build
           cd cmake/build
           export GRPC_INSTALL_DIR=$HOME/grpc/install
-          cmake -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DCMAKE_INSTALL_PREFIX=$GRPC_INSTALL_DIR ../..
-          make -j $(nproc)   # 使用所有 CPU 核心
+          cmake -DgRPC_INSTALL=ON \
+                -DgRPC_BUILD_TESTS=OFF \
+                -DCMAKE_INSTALL_PREFIX=$GRPC_INSTALL_DIR \
+                ../..
+          make -j $(nproc)
           make install
 
-      # 编译并安装 Abseil-cpp（gRPC 的第三方依赖）
-      - name: Build and install Abseil-cpp
+      # 编译 abseil-cpp（gRPC 第三方依赖）
+      - name: Build abseil-cpp
         run: |
           cd grpc
           mkdir -p third_party/abseil-cpp/cmake/build
           cd third_party/abseil-cpp/cmake/build
           export GRPC_EXT_INSTALL_DIR=$HOME/grpc/install_ext
-          cmake -DCMAKE_INSTALL_PREFIX=$GRPC_EXT_INSTALL_DIR -DCMAKE_POSITION_INDEPENDENT_CODE=TRUE ../..
+          cmake -DCMAKE_INSTALL_PREFIX=$GRPC_EXT_INSTALL_DIR \
+                -DCMAKE_POSITION_INDEPENDENT_CODE=TRUE \
+                ../..
           make -j $(nproc)
           make install
 
-      # 打包编译产物（gRPC 安装目录和 Abseil-cpp 安装目录）
-      - name: Package artifacts
+      # 打包并上传 gRPC 安装目录（避免单个 artifact 过大）
+      - name: Package gRPC artifacts
         run: |
-          mkdir -p artifacts
-          tar -czf artifacts/grpc-install.tar.gz -C $HOME/grpc install
-          tar -czf artifacts/grpc-ext-install.tar.gz -C $HOME/grpc install_ext
+          tar -czf grpc-install.tar.gz -C $HOME/grpc install
+          tar -czf abseil-cpp-install.tar.gz -C $HOME/grpc install_ext
 
-      # 上传工件（可在 Actions 运行页面下载）
-      - name: Upload artifacts
+      - name: Upload gRPC artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: grpc-built
-          path: artifacts/
-          retention-days: 7   # 保留天数
+          name: grpc-install
+          path: grpc-install.tar.gz
+
+      - name: Upload abseil-cpp artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: abseil-cpp-install
+          path: abseil-cpp-install.tar.gz
