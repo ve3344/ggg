@@ -10,7 +10,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-20.04
-    timeout-minutes: 120   # 编译可能较耗时，设置足够长的时间
 
     steps:
       # 检出当前仓库（如果有需要的工作流文件，否则可省略）
